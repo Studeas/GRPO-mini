@@ -56,6 +56,3 @@ GRPO-mini/
 ## Acknowledgements
 
 Credit to the original implementation from: [GRPO-Zero](https://github.com/policy-gradient/GRPO-Zero)
-
-
-s

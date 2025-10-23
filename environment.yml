@@ -1,0 +1,29 @@
+name: grpo-zero
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  
+  - pytorch>=2.0.0
+  - pytorch-cuda=11.8  
+  
+  - numpy>=1.24.0
+  - pandas>=2.2.0
+  - pyyaml>=6.0
+  - jinja2>=3.1.0
+  
+  - jupyter
+  - notebook>=7.0.0
+  - ipykernel>=6.25.0
+  
+  - tensorboard>=2.13.0
+  
+  - pip
+  - pip:
+    - tokenizers>=0.21.1
+    - safetensors>=0.5.3
+    - pyarrow>=19.0.0

@@ -1,0 +1,16 @@
+__pycache__/
+
+.venv
+.venv/
+
+logs
+logs/
+
+runs/
+runs
+
+Countdown-Tasks-3to4
+
+models
+models/
+

@@ -1,5 +1,5 @@
 model:
-  pretrained_model_path: "Qwen/Qwen2.5-0.5B-Instruct"
+  pretrained_model_path: "Qwen/Qwen2.5-7B-Instruct"
   device: "cuda"
   dtype: "bfloat16"
 
@@ -14,13 +14,11 @@ training:
   learning_rate: 1.0e-6
   weight_decay: 0.0
   betas: [0.9, 0.999]
-  inference_batch_size: 64
-  
-  
   skip_unfinished_episodes: false
   ckpt_save_interval: 20
   eval_interval: 10
   memory_efficient_adamw: false
+  inference_batch_size: 128
   
   loss_type: "ot" 
   beta: 0.1

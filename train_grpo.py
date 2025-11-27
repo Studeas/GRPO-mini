@@ -1,7 +1,5 @@
-import dataclasses
 import math
 import torch
-import re
 import pandas as pd
 import numpy as np
 import torch.nn.functional as F
@@ -10,26 +8,26 @@ import argparse
 import logging
 import sys
 import os
+import re
 from datetime import datetime
 from torch import nn
 from torch.optim import AdamW
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from collections import defaultdict
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from datasets import load_dataset
 from huggingface_hub import snapshot_download
 
-# --- Setup Arguments ---
+from rl_datasets import RLDataset, get_task, BaseTask
+
 parser = argparse.ArgumentParser(description="Training Script")
 parser.add_argument("--config", type=str, default="config_math.yaml", help="Path to the config file")
-parser.add_argument("--dataset_name", type=str, default="gsm8k", choices=["gsm8k", "math", "countdown"], help="Dataset to use")
+parser.add_argument("--dataset_name", type=str, default="countdown", choices=["gsm8k", "math", "countdown"], help="Dataset to use")
 args = parser.parse_args()
 
-# --- Setup Workspace & Logging ---
 config_path = Path(args.config)
 config_name = config_path.stem
 work_dir = Path("runs") / f"{config_name}_{args.dataset_name}"
@@ -45,180 +43,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Templates ---
-SYSTEM_MESSAGE = (
-    "You are a helpful assistant. You first think about the reasoning process "
-    "in your mind and then provide the user with the answer."
-)
-
-MATH_TEMPLATE = (
-    "Solve the following problem. "
-    "Show your work in <think> </think> tags. "
-    "And return the final answer in <answer> </answer> tags, for example <answer> 42 </answer>.\n\n"
-    "--- Example ---\n"
-    "Problem: Joy has 5 balls. He buys 2 more. How many balls does he have?\n"
-    "<think>\n"
-    "Joy starts with 5 balls.\n"
-    "He buys 2 more balls.\n"
-    "5 + 2 = 7.\n"
-    "</think>\n"
-    "<answer> 7 </answer>\n\n"
-    "--- Your Task ---\n"
-    "Problem: {question}"
-)
-
-RESPONSE_PROMPT = "Let me solve this step by step.\n<think>"
-
-# --- Helper: Model Download ---
-def get_or_download_model(model_path_or_id: str) -> str:
-    """
-    Check if model exists locally. If not, download to ./models/{model_name}.
-    Returns the local path to the model.
-    """
-    # 1. If it's already a valid local path, return class Tokenizer:
-    def __init__(self, model_path: str):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        # 强制设置为左填充，这对 Decoder-only 模型生成至关重要
-        self.tokenizer.padding_side = "left" 
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.pad_token_id = self.tokenizer.pad_token_id
-        self.eos_token_id = self.tokenizer.eos_token_id
-        self.eos_token = self.tokenizer.eos_tokenit
-    if os.path.exists(model_path_or_id):
-        logger.info(f"Model found locally at: {model_path_or_id}")
-        return model_path_or_id
-
-    # 2. Setup local models directory
-    current_dir = Path.cwd()
-    models_root = current_dir / "models"
-    models_root.mkdir(parents=True, exist_ok=True)
-
-    # 3. Construct target directory name (e.g., Qwen/Qwen2.5 -> Qwen2.5)
-    model_name = model_path_or_id.split("/")[-1]
-    local_model_path = models_root / model_name
-
-    # 4. Check if already downloaded (simple check: if dir exists and has config.json)
-    if local_model_path.exists() and (local_model_path / "config.json").exists():
-        logger.info(f"Model already downloaded at: {local_model_path}")
-        return str(local_model_path)
-    
-    logger.info(f"Model not found locally. Downloading {model_path_or_id} to {local_model_path}...")
-    try:
-        snapshot_download(
-            repo_id=model_path_or_id,
-            local_dir=local_model_path,
-            local_dir_use_symlinks=False, # Make it standalone
-            resume_download=True
-        )
-        logger.info(f"Download complete.")
-        return str(local_model_path)
-    except Exception as e:
-        logger.error(f"Failed to download model: {e}")
-        raise e
-
-def extract_answer_content(response: str) -> Optional[str]:
-    answer_regex = r"<answer>(.*?)<\/answer>"
-    match = re.search(answer_regex, response, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    
-    if "answer is" in response.lower():
-        return response.lower().split("answer is")[-1]
-    
-    return None
-
-def extract_last_number(text: str) -> Optional[float]:
-    text = text.replace(',', '')
-    numbers = re.findall(r"[-+]?\d*\.\d+|\d+", text)
-    if numbers:
-        try:
-            return float(numbers[-1])
-        except:
-            return None
-    return None
-
-def format_reward_function(response: str, end_token: Optional[str] = None) -> float:
-    if end_token and response.endswith(end_token):
-        response = response[: -len(end_token)]
-    think_regex = r"<think>.*?<\/think>"
-    answer_regex = r"<answer>.*?<\/answer>"
-    full_format_regex = r"^<think>.*?<\/think>\n<answer>.*?<\/answer>$"
-    
-    think_match = re.search(think_regex, response, re.DOTALL)
-    answer_match = re.search(answer_regex, response, re.DOTALL)
-    full_format_match = re.match(full_format_regex, response, re.DOTALL)
-    
-    if full_format_match: return 1.0
-    reward = 0.0
-    if think_match: reward += 0.1
-    if answer_match: reward += 0.5
-    return reward
-
-def math_reward_function(response: str, ground_truth: str) -> float:
-    model_answer_content = extract_answer_content(response)
-    if not model_answer_content:
-        return 0.0
-
-    model_val = extract_last_number(model_answer_content)
-    
-    if "####" in ground_truth:
-        gt_clean = ground_truth.split("####")[-1].strip()
-    else:
-        gt_clean = ground_truth
-    
-    gt_val = extract_last_number(gt_clean)
-
-    if model_val is not None and gt_val is not None:
-        if abs(model_val - gt_val) < 1e-4:
-            return 1.0
-    
-    return 0.0
-
-def reward_function(response: str, ground_truth: str, end_token: str = None) -> Dict[str, Any]:
-    fmt_rew = format_reward_function("<think>" + response, end_token)
-    ans_rew = math_reward_function(response, ground_truth)
-    noise = len(response) * 1e-6
-    total_reward = fmt_rew * 0.1 + ans_rew * 1.0 + noise
-    
-    return {
-        "reward": total_reward,
-        "reward_info": {
-            "format_reward": fmt_rew,
-            "answer_reward": ans_rew,
-        },
-    }
-
-class MemoryEfficientAdamW(AdamW):
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, 
-                 weight_decay=1e-2, amsgrad=False):
-        super().__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
 
 class Tokenizer:
     def __init__(self, model_path: str):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        self.tokenizer.padding_side = "left" 
+        self.tokenizer.padding_side = "left"  # Crucial for decoder-only generation
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.pad_token_id = self.tokenizer.pad_token_id
         self.eos_token_id = self.tokenizer.eos_token_id
         self.eos_token = self.tokenizer.eos_token
 
-    def encode_chat_with_response_prompt(self, messages: List[Dict[str, str]], prompt: str) -> str:
-        text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        return text + prompt
-
     def tokenize(self, text: str):
         return self.tokenizer(text, add_special_tokens=False)
 
     def detokenize(self, ids: List[int]) -> str:
         return self.tokenizer.decode(ids, skip_special_tokens=False)
+    
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+        return self.tokenizer.apply_chat_template(
+            messages, 
+            tokenize=tokenize, 
+            add_generation_prompt=add_generation_prompt
+        )
 
-@dataclass
-class MiniBatch:
-    prefix: List[str]
-    prefix_token_ids: List[List[int]]
-    references: List[str]
+class MemoryEfficientAdamW(AdamW):
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, 
+                 weight_decay=1e-2, amsgrad=False):
+        super().__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
 
 @dataclass
 class Episode:
@@ -231,54 +83,40 @@ class Episode:
     embeddings: Optional[torch.Tensor] = None 
     old_log_probs: Optional[torch.Tensor] = None 
 
-class ReasoningDataset(Dataset):
-    def __init__(self, tokenizer: Tokenizer, dataset_name: str, split: str = "train"):
-        self.tokenizer = tokenizer
-        self.dataset_name = dataset_name.lower()
-        self.data = []
-        
-        if self.dataset_name == "gsm8k":
-            ds = load_dataset("gsm8k", "main", split=split)
-            for item in ds:
-                self.data.append({
-                    "question": item["question"],
-                    "ground_truth": item["answer"]
-                })
-        elif self.dataset_name == "math":
-            ds = load_dataset("hendrycks/competition_math", split=split)
-            for item in ds:
-                self.data.append({
-                    "question": item["problem"],
-                    "ground_truth": item["solution"]
-                })
-        else:
-            raise ValueError(f"Unknown dataset: {dataset_name}")
 
-        logger.info(f"Loaded {len(self.data)} examples from {dataset_name} ({split})")
+def get_or_download_model(model_path_or_id: str) -> str:
+    """
+    Check if model exists locally. If not, download to ./models/{model_name}.
+    Returns the local path to the model.
+    """
+    if os.path.exists(model_path_or_id):
+        logger.info(f"Model found locally at: {model_path_or_id}")
+        return model_path_or_id
 
-    def __len__(self): return len(self.data)
+    current_dir = Path.cwd()
+    models_root = current_dir / "models"
+    models_root.mkdir(parents=True, exist_ok=True)
 
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        user_msg = MATH_TEMPLATE.format(question=item["question"])
-        prefix = self.tokenizer.encode_chat_with_response_prompt(
-            [{"role": "system", "content": SYSTEM_MESSAGE}, {"role": "user", "content": user_msg}],
-            RESPONSE_PROMPT,
+    model_name = model_path_or_id.split("/")[-1]
+    local_model_path = models_root / model_name
+
+    if local_model_path.exists() and (local_model_path / "config.json").exists():
+        logger.info(f"Model already downloaded at: {local_model_path}")
+        return str(local_model_path)
+    
+    logger.info(f"Model not found locally. Downloading {model_path_or_id} to {local_model_path}...")
+    try:
+        snapshot_download(
+            repo_id=model_path_or_id,
+            local_dir=local_model_path,
+            local_dir_use_symlinks=False, 
+            resume_download=True
         )
-        tokens = self.tokenizer.tokenize(prefix)
-        return {
-            "prefix": prefix, 
-            "ids": tokens['input_ids'], 
-            "reference": item["ground_truth"]
-        }
-
-    @staticmethod
-    def collate_fn(batch):
-        return MiniBatch(
-            prefix=[b["prefix"] for b in batch],
-            prefix_token_ids=[b["ids"] for b in batch],
-            references=[b["reference"] for b in batch]
-        )
+        logger.info(f"Download complete.")
+        return str(local_model_path)
+    except Exception as e:
+        logger.error(f"Failed to download model: {e}")
+        raise e
 
 def robust_sinkhorn(old_emb, new_emb, mask, window_size=16, eps=0.1, iter=5):
     old_emb, new_emb = old_emb.float(), new_emb.float()
@@ -300,14 +138,11 @@ def robust_sinkhorn(old_emb, new_emb, mask, window_size=16, eps=0.1, iter=5):
     return (P * cost).sum((1,2)) / (mask.sum(1) + 1e-6)
 
 @torch.no_grad()
-def rollout(model, batch, tokenizer, max_gen_len, num_samples, device, loss_type="ot"):
-
+def rollout(model, batch, tokenizer, task: BaseTask, max_gen_len, num_samples, device, loss_type="ot", inference_batch_size=32):
     total_bsz = len(batch.prefix) * num_samples
     all_prefix_ids = [ids for ids in batch.prefix_token_ids for _ in range(num_samples)]
     all_references = [r for r in batch.references for _ in range(num_samples)]
     all_prefixes = [p for p in batch.prefix for _ in range(num_samples)]
-    
-    inference_batch_size = 64 # 64 or 32 
     
     all_episodes = []
     
@@ -319,9 +154,9 @@ def rollout(model, batch, tokenizer, max_gen_len, num_samples, device, loss_type
         chunk_prefixes = all_prefixes[start_idx:end_idx]
         chunk_refs = all_references[start_idx:end_idx]
         
+        # Left Padding Logic
         max_p_len = max(len(p) for p in chunk_prefix_ids)
         input_ids = torch.full((chunk_bsz, max_p_len), tokenizer.pad_token_id, dtype=torch.long, device=device)
-        
         for i, p in enumerate(chunk_prefix_ids): 
             l = len(p)
             input_ids[i, -l:] = torch.tensor(p, device=device)
@@ -362,7 +197,8 @@ def rollout(model, batch, tokenizer, max_gen_len, num_samples, device, loss_type
             text_gen = tokenizer.detokenize(gen_ids)
             full_text = chunk_prefixes[i] + text_gen
             
-            reward_result = reward_function(text_gen, chunk_refs[i], tokenizer.eos_token)
+            reward_result = task.compute_total_reward(text_gen, chunk_refs[i])
+            
             rew = reward_result["reward"]
             info = reward_result["reward_info"]
             
@@ -443,8 +279,9 @@ def update_policy(model, optimizer, episodes, config, pad_id, device, loss_type,
                  k_loss = torch.clamp(kl_vals - config["training"].get("kl_target", 0.0), min=0.0)
                  tr_loss = (k_loss * mask_pred).sum() / (mask_pred.sum() + 1e-6)
 
+            # Approx KL with Stability Clamp
             log_ratio = old_lps[:, :-1] - token_lps
-            ratio = torch.exp(log_ratio)
+            ratio = torch.exp(torch.clamp(log_ratio, max=10.0))
             approx_kl_vals = ratio - log_ratio - 1.0 
             approx_kl_dist = (approx_kl_vals * mask_pred).sum() / (mask_pred.sum() + 1e-6)
             stats["approx_kl"] += approx_kl_dist.item()
@@ -468,12 +305,13 @@ def update_policy(model, optimizer, episodes, config, pad_id, device, loss_type,
     return {k: v/grad_steps for k,v in stats.items()}
 
 @torch.no_grad()
-def evaluate(model, loader, tokenizer, config, device, loss_type):
+def evaluate(model, loader, tokenizer, task: BaseTask, config, device, loss_type):
     model.eval()
     accs, fmts = [], []
     
     for batch in loader:
         bsz = len(batch.prefix)
+        
         input_ids = [torch.tensor(ids, device=device) for ids in batch.prefix_token_ids]
 
         max_len = max(len(t) for t in input_ids)
@@ -500,8 +338,9 @@ def evaluate(model, loader, tokenizer, config, device, loss_type):
             gen_only = output_ids[i][input_len:] 
             
             text_gen = tokenizer.detokenize(gen_only.tolist())
+
+            reward_result = task.compute_total_reward(text_gen, batch.references[i])
             
-            reward_result = reward_function(text_gen, batch.references[i], tokenizer.eos_token)
             accs.append(reward_result["reward_info"]["answer_reward"])
             fmts.append(reward_result["reward_info"]["format_reward"])
 
@@ -541,13 +380,16 @@ def main():
     
     optimizer = MemoryEfficientAdamW(model.parameters(), lr=config["training"]["learning_rate"])
     
-    train_ds = ReasoningDataset(tokenizer, dataset_name, "train")
-    test_ds = ReasoningDataset(tokenizer, dataset_name, "test")
+    logger.info(f"Initializing Task: {dataset_name}")
+    task = get_task(dataset_name, tokenizer)
+    
+    train_ds = RLDataset(task, "train")
+    test_ds = RLDataset(task, "test")
     
     train_loader = DataLoader(train_ds, batch_size=config["training"]["num_questions_per_batch"], 
-                              collate_fn=ReasoningDataset.collate_fn, shuffle=True)
+                              collate_fn=RLDataset.collate_fn, shuffle=True)
     test_loader = DataLoader(test_ds, batch_size=config["training"]["num_questions_per_batch"], 
-                             collate_fn=ReasoningDataset.collate_fn, shuffle=False)
+                             collate_fn=RLDataset.collate_fn, shuffle=False)
     
     tb_dir = work_dir / f"tb_{loss_type}_{datetime.now().strftime('%m%d_%H%M')}"
     writer = SummaryWriter(tb_dir)
@@ -564,14 +406,18 @@ def main():
 
     step = start_step
     n_samples = config["training"]["batch_size"] // config["training"]["num_questions_per_batch"]
-    
+    inference_bsz = config["training"].get("inference_batch_size", 32)
+
     logger.info("Starting Training...")
+
+    eval_acc, fmt_acc = evaluate(model, test_loader, tokenizer, task, config, device, loss_type)
+    logger.info(f" >> [Initial EVAL] Accuracy: {eval_acc:.2f}, format: {fmt_acc: .2f}")
+    writer.add_scalar("Eval/Success", eval_acc, step)
     
     while True:
         for batch in train_loader:
             step += 1
-            episodes = rollout(model, batch, tokenizer, config["training"]["max_gen_len"], n_samples, device, loss_type)
-            
+            episodes = rollout(model, batch, tokenizer, task, config["training"]["max_gen_len"], n_samples, device, loss_type, inference_bsz)
             raw_accs = [e.reward_info["answer_reward"] for e in episodes]
             tr_acc = np.mean(raw_accs)
             
@@ -585,7 +431,7 @@ def main():
 
             stats = update_policy(model, optimizer, episodes, config, tokenizer.pad_token_id, device, loss_type, beta)
             
-            main_dist = stats.get('ot_dist', 0.0) if loss_type == 'ot' else stats.get('approx_kl', stats.get('kl_dist', 0.0))
+            main_dist = stats.get('ot_dist', 0.0) if loss_type == 'ot' else stats.get('kl_dist', 0.0)
             
             log_msg = (
                 f"Step {step} | Loss: {stats['loss']:.4f} | "
@@ -598,9 +444,10 @@ def main():
             writer.add_scalar(f"Dist/{loss_type}", main_dist, step)
             
             if step % config["training"]["eval_interval"] == 0:
-                eval_acc, _ = evaluate(model, test_loader, tokenizer, config, device, loss_type)
-                logger.info(f" >> [EVAL] Accuracy: {eval_acc:.2f}")
+                eval_acc, fmt_acc = evaluate(model, test_loader, tokenizer, task, config, device, loss_type)
+                logger.info(f" >> [Initial EVAL] Accuracy: {eval_acc:.2f}, format: {fmt_acc: .2f}")
                 writer.add_scalar("Eval/Success", eval_acc, step)
+                writer.add_scalar("Eval/Format", fmt_acc, step)
                 
             if step % config["training"]["ckpt_save_interval"] == 0:
                 p = ckpt_dir / f"step_{step}.pt"

@@ -10,7 +10,7 @@ ln -s ~/scratch/workdir models
 
 Run with:
 ```
-python grpo_exp.py --config path_to_your_config --dataset_name OPTIONAL
+python train_grpo.py --config path_to_your_config --dataset_name OPTIONAL
 ```
 
 ## Implementation Notes

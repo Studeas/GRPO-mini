@@ -14,7 +14,7 @@ training:
   learning_rate: 5.0e-6
   weight_decay: 0.0
   betas: [0.9, 0.999]
-  
+  inference_batch_size: 64
   
   skip_unfinished_episodes: false
   ckpt_save_interval: 20
@@ -22,7 +22,7 @@ training:
   memory_efficient_adamw: false
   
   loss_type: "kl" 
-  beta: 0.05
+  beta: 0.2
   kl_target: 0.0
 
   ot_target: 0.0

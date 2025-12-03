@@ -1,5 +1,5 @@
 model:
-  pretrained_model_path: "Qwen/Qwen2.5-7B-Instruct"
+  pretrained_model_path: "Qwen/Qwen2.5-3B-Instruct"
   device: "cuda"
   dtype: "bfloat16"
 
@@ -18,11 +18,11 @@ training:
   ckpt_save_interval: 20
   eval_interval: 10
   memory_efficient_adamw: false
-  inference_batch_size: 128
+  inference_batch_size: 256
   
   loss_type: "ot" 
-  beta: 0.1
+  beta: 0.05
   kl_target: 0.0
 
   ot_target: 0.05
-  ot_window: 16
+  ot_window: 8

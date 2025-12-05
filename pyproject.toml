@@ -1,0 +1,79 @@
+[project]
+name = "grpo-mini"
+version = "0.1.0"
+description = "A minimal GRPO training implementation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.1.0",
+    "numpy",
+    "pandas",
+    "pyyaml",
+    "transformers>=4.35.0",
+    "tensorboard",
+    "huggingface-hub",
+    "sentencepiece",
+    "accelerate",
+    "seaborn",
+    "matplotlib"
+]
+
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "pre-commit"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+
+# ML lines can get long; 100 or 120 is usually better than the default 88
+line-length = 120
+exclude = ["*.ipynb"]
+
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # isort
+    "I",
+    "G",
+]
+ignore = [
+    # star imports
+    "F405", "F403",
+    # lambda expression assignment
+    "E731",
+    # Loop control variable not used within loop body
+    "B007",
+    # f-string format
+    "UP032",
+    # `.log()` statement uses f-string
+    "G004",
+    # X | None for type annotations
+    "UP045",
+    # deprecated import
+    "UP035",
+    # raise error
+    "B904",
+]
+
+[tool.mypy]
+pretty            = true
+ignore_missing_imports = true
+explicit_package_bases = true
+follow_imports = "skip"
+
+# Blanket silence
+ignore_errors = true

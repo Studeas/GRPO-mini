@@ -1,0 +1,12 @@
+torch>=2.1.0
+numpy
+pandas
+pyyaml
+transformers>=4.35.0
+tensorboard
+huggingface-hub
+sentencepiece
+accelerate
+datasets
+matplotlib
+seaborn

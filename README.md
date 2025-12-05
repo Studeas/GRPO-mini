@@ -12,7 +12,7 @@ Distinct from standard implementations, this project integrates **Optimal Transp
     * **Approximate KL:** Stable approximation for variance reduction.
     * **Optimal Transport (OT):** Uses a robust Sinkhorn algorithm to align embedding distributions.
 * **Efficient Training:** Includes `MemoryEfficientAdamW` and supports left-padding for efficient batch generation.
-* **Multi-Model Support:** Configs ready for 0.5B, 3B, and 7B models (e.g., Qwen, Llama).
+* **Multi-Model Support:** Configs ready for 0.5B, 3B, and 7B models (Qwen 2.5).
 * **Integrated Logging:** Built-in TensorBoard support for tracking rewards, entropy, and loss.
 
 ## 📂 Directory Structure
@@ -33,7 +33,7 @@ Distinct from standard implementations, this project integrates **Optimal Transp
 
 **Prerequisites:** Python 3.12+ and CUDA-enabled GPU.
 
-> **⚠️ Hardware Note:** Running **3B parameter models (and larger)** typically requires an **80GB GPU** (e.g., A100, H100) to handle the memory overhead of GRPO rollouts and gradients. 0.5B models can run on smaller consumer GPUs (24GB+).
+> **⚠️ Hardware Note:** Running **3B parameter models (and larger)** typically requires an **80GB GPU** (e.g., A100, H100) to handle the memory overhead of GRPO rollouts and gradients.
 
 1.  **Clone the repository:**
 
@@ -64,7 +64,7 @@ To start training, run `main.py` with a configuration file and a dataset name.
 
 ```bash
 python main.py \
-    --config configs_0.5b/config_ot_beta0.1_target0.05.yaml \
+    --config configs/configs_3b_ot/config_ot_beta0.1_target0.05_w8_3b.yaml \
     --dataset_name countdown
 ```
 
@@ -82,7 +82,7 @@ Configurations are organized by model size and loss type. Example structure of a
 
 ```yaml
 model:
-  pretrained_model_path: "Qwen/Qwen2.5-0.5B-Instruct"
+  pretrained_model_path: "Qwen/Qwen2.5-3B-Instruct"
   dtype: "bfloat16"
   device: "cuda"
 
@@ -119,4 +119,4 @@ One of the core features of **OT-GRPO** is the implementation of **Optimal Trans
 
 The visualization below demonstrates a scenario where the model generates a semantically correct answer that differs in phrasing and order from the reference.
 
-  
+![OT vs KL Visualization](single_axis_ot_viz.png)

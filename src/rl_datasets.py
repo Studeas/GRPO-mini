@@ -236,7 +236,7 @@ class CountdownTask(BaseTask):
             result = eval(model_ans, {"__builtins__": None}, {})
             if abs(float(result) - float(target)) < 1e-5:
                 return 1.0
-        except ValueError:
+        except (ValueError, SyntaxError, ZeroDivisionError, NameError, TypeError):
             pass
         return 0.0
 

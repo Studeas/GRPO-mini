@@ -1,7 +1,7 @@
 [project]
-name = "grpo-mini"
+name = "ot-grpo"
 version = "0.1.0"
-description = "A minimal GRPO training implementation"
+description = "Group Relative Policy Optimization with Optimal Transport (Sinkhorn) loss"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,8 +1,8 @@
-# GRPO-Mini
+# OT-GRPO
 
-**GRPO-Mini** is a lightweight, hackable implementation of **Group Relative Policy Optimization (GRPO)** for fine-tuning Large Language Models (LLMs) via Reinforcement Learning.
+**OT-GRPO** is a lightweight, hackable implementation of **Group Relative Policy Optimization (GRPO)** for fine-tuning Large Language Models (LLMs) via Reinforcement Learning.
 
-Designed for simplicity and research, this repository provides a clean loop for **Rollout → Evaluation → Policy Update**, supporting multiple divergence constraints including standard KL divergence and Optimal Transport (Sinkhorn) distances.
+Distinct from standard implementations, this project integrates **Optimal Transport (Sinkhorn)** loss to provide a more robust training signal than rigid KL divergence, especially for reasoning tasks where semantic correctness matters more than exact phrasing.
 
 ## 🚀 Key Features
 
@@ -24,35 +24,35 @@ Designed for simplicity and research, this repository provides a clean loop for 
 ├── src/
 │   ├── train_grpo.py        # Core training loop & policy logic
 │   └── rl_datasets.py       # Dataset loaders (GSM8K, Math, Countdown)
-├── configs/                 # YAML configurations for various model sizes
+├── configs_*/               # YAML configurations for various model sizes
 ├── runs/                    # Training logs and checkpoints
 └── models/                  # Locally downloaded Hugging Face models
 ````
 
 ## 🛠️ Installation
 
-Prerequisites: Python 3.12+ and CUDA-enabled GPU.
+**Prerequisites:** Python 3.12+ and CUDA-enabled GPU.
 
-⚠️ Hardware Note: Running 3B parameter models (and larger) typically requires an 80GB GPU (e.g., A100, H100) to handle the memory overhead of GRPO rollouts and gradients. 0.5B models can run on smaller consumer GPUs (24GB+).
+> **⚠️ Hardware Note:** Running **3B parameter models (and larger)** typically requires an **80GB GPU** (e.g., A100, H100) to handle the memory overhead of GRPO rollouts and gradients. 0.5B models can run on smaller consumer GPUs (24GB+).
 
 1.  **Clone the repository:**
 
     ```bash
-    git clone https://github.com/Studeas/GRPO-mini.git
-    cd grpo-mini
+    git clone https://github.com/Studeas/OT-GRPO.git
+    cd OT-GRPO
     ```
 
 2.  **Install dependencies:**
     It is recommended to use a virtual environment.
 
     ```bash
-    # install with uv(Recommended)
+    # Install with uv (Recommended)
     uv sync
 
-    # Install with development tools (Ruff, etc.)
+    # OR Install with development tools via pip
     pip install ".[dev]"
 
-    # OR standard install
+    # OR standard pip install
     pip install -r requirements.txt
     ```
 
@@ -64,7 +64,7 @@ To start training, run `main.py` with a configuration file and a dataset name.
 
 ```bash
 python main.py \
-    --config configs/configs_3b_ot/config_ot_beta0.1_target0.05_w8_3b.yaml \
+    --config configs_0.5b/config_ot_beta0.1_target0.05.yaml \
     --dataset_name countdown
 ```
 
@@ -72,7 +72,7 @@ python main.py \
 
   * `--config`: Path to the YAML configuration file (defines model, learning rate, loss type, etc.).
   * `--dataset_name`: The task to train on. Choices:
-      * `countdown`: A number game task (Reported).
+      * `countdown`: A number game task.
       * `gsm8k`: Grade School Math 8K.
       * `math`: Advanced Math problems.
 
@@ -82,7 +82,7 @@ Configurations are organized by model size and loss type. Example structure of a
 
 ```yaml
 model:
-  pretrained_model_path: "Qwen/Qwen2.5-3B-Instruct"
+  pretrained_model_path: "Qwen/Qwen2.5-0.5B-Instruct"
   dtype: "bfloat16"
   device: "cuda"
 
@@ -115,16 +115,8 @@ This implementation follows the **Group Relative Policy Optimization** paradigm:
 
 ## 🖼️ Visualization: Semantic OT vs. Rigid KL
 
-One of the core features of **GRPO-Mini** is the implementation of **Optimal Transport (Sinkhorn)** loss, which provides a more flexible training signal than standard KL Divergence.
+One of the core features of **OT-GRPO** is the implementation of **Optimal Transport (Sinkhorn)** loss, which provides a more flexible training signal than standard KL Divergence.
 
 The visualization below demonstrates a scenario where the model generates a semantically correct answer that differs in phrasing and order from the reference.
 
-![OT vs KL Visualization](single_axis_ot_viz.png)
-
-### What this graph shows:
-* **The Scenario:**
-    * **Reference:** "The pairs are (1, 6)"
-    * **Generated:** "Valid sets: {6, 1}"
-* **Top (Heatmap):** The **Optimal Transport Plan** automatically finds the semantic alignment between tokens. Notice how it matches "1" to "1" and "6" to "6" despite the swapped order, and aligns "sets" with "pairs".
-* **Bottom Left (Bar Chart):** **Rigid KL (Red)** penalizes the model heavily at every step because the tokens don't match exactly position-for-position. **Semantic OT (Green)** yields a much lower loss because it recognizes the content is correct.
-* **Bottom Right (Line Chart):** The accumulated loss for KL explodes, potentially destabilizing training, while OT remains low and stable, encouraging the model to focus on **meaning over formatting**.
+  
